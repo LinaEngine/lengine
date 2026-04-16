@@ -12,6 +12,7 @@ FILE(GLOB SRC
     "src/tests/*.cc"
     "src/graphics/*.cc"
     "src/graphics_backend/*.cc"
+    "src/graphics_backend/buffers/*.cc"
     "src/ecs/components/*.cc"
     "src/ecs/components/colliders/*.cc"
     )
