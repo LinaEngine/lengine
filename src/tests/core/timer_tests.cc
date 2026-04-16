@@ -3,7 +3,7 @@
 namespace lina { namespace tests {
     void sleep_test()
     {
-        core::Timer t; 
+        core::timer t; 
         using namespace std::chrono_literals;
 
         BEGIN_TEST("100ms sleep");

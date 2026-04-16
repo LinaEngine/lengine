@@ -17,7 +17,7 @@ using b8 = bool;
 using f32 = float; 
 using f64 = double;
 
-enum class TimerUnit
+enum class timer_unit
 {
     us = 1000000,
     ms = 1000,

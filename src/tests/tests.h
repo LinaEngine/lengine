@@ -1,7 +1,9 @@
 #ifndef TESTS_H
 #define TESTS_H
-#include <iostream>
-#include <cassert>
-#define BEGIN_TEST(s) do{std::cerr << "beginning " << s << " test...\n";}while(0)
-#define END_TEST(s) do{std::cerr << "test " << s << " success!\n";}while(0)
+#include "core/timer_tests.h"
+
+namespace lina { namespace tests {
+    void run_all();
+    void run_core();
+}}
 #endif

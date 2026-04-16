@@ -9,9 +9,9 @@ set(LDFLAGS "-ldl -lpthread -lX11 -lXxf86vm -lXrandr -lXi")
 FILE(GLOB SRC
     "main.cc"
     "src/tests/core/*.cc"
-    "src/tests/core/*.h"
-    "src/core/*.h"
-    "src/tests/*.h"
+    "src/tests/*.cc"
+    "src/graphics/*.cc"
+    "src/graphics_backend/*.cc"
     )
 add_executable(${PROJECT_NAME} ${SRC})
 set(CMAKE_BUILD_TYPE Debug)

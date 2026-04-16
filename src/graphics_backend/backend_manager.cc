@@ -1,0 +1,789 @@
+#include "backend_manager.h"
+#include "backend_settings.h"
+#include <GLFW/glfw3.h>
+#include <cinttypes>
+#include <iostream>
+#include <vulkan/vulkan_core.h>
+
+namespace lina { namespace graphics { namespace backend {
+    b8 manager::init(window* w)
+    {
+        mcurr_render_pass = 0;
+        mcurr_pipeline = 0;
+        mwindow = w;
+        if (create_vulkan_instance())
+        {
+            glfwCreateWindowSurface(
+                    mvkinstance,
+                    mwindow->get_window(),
+                    nullptr, &mvksurface);
+            b8 success = 
+                create_device() && 
+                create_swap_chain() && 
+                create_sync_objects() && 
+                create_command_structures();
+            return true;
+        }
+        return false;
+    }
+    void manager::begin_draw()
+    {
+        vkWaitForFences(
+                mvkdevice, 1, 
+                &msync.finflight, VK_TRUE, UINT64_MAX);
+        vkResetFences(mvkdevice, 1, &msync.finflight);
+        u32 image_idx;
+        VkResult res = vkAcquireNextImageKHR(
+                mvkdevice,
+                mvk_swapchain,
+                UINT64_MAX,
+                msync.simage_available, VK_NULL_HANDLE,
+                &image_idx
+                );
+        if (res == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            recreate_swap_chain();
+            return;
+        }
+        mcurr_img_idx = image_idx;
+        VkCommandBufferBeginInfo begin_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        };
+        vkResetCommandBuffer(mvk_command_buffer, 0);
+        vkBeginCommandBuffer(mvk_command_buffer, &begin_info);
+        VkViewport view_port = 
+        {
+            .x = 0.0f,
+            .y = 0.0f,
+            .width = (f32)mvk_extent.width,
+            .height = (f32)mvk_extent.height,
+            .minDepth = 0.01f,
+            .maxDepth = 1.0f
+        };
+        vkCmdSetViewport(mvk_command_buffer, 
+                0,
+                1,
+                &view_port);
+        VkRect2D scissor = 
+        {
+            .offset = {0, 0},
+            .extent = mvk_extent
+        };
+        vkCmdSetScissor(mvk_command_buffer,
+                0,
+                1,
+                &scissor);
+        VkClearValue clear_values[3];
+        clear_values[0].color = {{0., 0., 0., 1.}};
+        clear_values[1].color = {{0., 0., 0., 1.}};
+        clear_values[2].depthStencil = {1.0, 0};
+        VkRenderPassBeginInfo pass_begin_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = mvk_render_passes[0],
+            .framebuffer = mvk_frame_buffers[mcurr_img_idx],
+            .renderArea = {.offset = {0, 0}, .extent = mvk_extent},
+            .clearValueCount = 3,
+            .pClearValues = clear_values,
+        };
+        vkCmdBeginRenderPass(
+                mvk_command_buffer, 
+                &pass_begin_info, 
+                VK_SUBPASS_CONTENTS_INLINE);
+
+    }
+    void manager::bind(u32 idx)
+    {
+        vkCmdBindPipeline(mvk_command_buffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,mvk_pipeline[idx]);
+    }
+    void manager::end_draw()
+    {
+        // submission
+        vkCmdSetPrimitiveTopology(
+                mvk_command_buffer,
+                VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        vkCmdDraw(mvk_command_buffer, 
+                3, 1, 0, 0);
+        vkCmdEndRenderPass(mvk_command_buffer);
+        vkEndCommandBuffer(mvk_command_buffer);
+
+        VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+
+        VkSemaphore wait_semaphores[] = {msync.simage_available};
+        VkSemaphore signal_semaphores[] = {msync.srender_finished};
+
+        VkSubmitInfo sub_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = wait_semaphores,
+            .pWaitDstStageMask = wait_stages,
+
+            .commandBufferCount = 1,
+            .pCommandBuffers = &mvk_command_buffer,
+
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = signal_semaphores,
+        };
+        vkQueueSubmit(
+                mqueues.graphics_queue, 1,
+                &sub_info, msync.finflight);
+
+        // presentation
+        VkPresentInfoKHR present_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = signal_semaphores,
+            .swapchainCount = 1,
+            .pSwapchains = &mvk_swapchain,
+            .pImageIndices = &mcurr_img_idx,
+        };
+
+        VkResult res = vkQueuePresentKHR(mqueues.present_queue, &present_info);
+        if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || mwindow->is_resized())
+        {
+            mwindow->set_resized(false);
+            recreate_swap_chain();
+        }
+    }
+    b8 manager::create_vulkan_instance()
+    {
+        VkApplicationInfo application_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            .pApplicationName = "Lina Engine",
+            .applicationVersion = VK_MAKE_VERSION(1, 3, 0),
+            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+            .apiVersion = VK_API_VERSION_1_3,
+        };
+        u32 glfw_extesion_count = 0;
+        const char** extensions = glfwGetRequiredInstanceExtensions(&glfw_extesion_count);
+        VkInstanceCreateInfo inf = 
+        {
+            .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .pApplicationInfo = &application_info,
+            .enabledLayerCount = (u32)enabled_layers.size(),
+            .ppEnabledLayerNames = enabled_layers.data(),
+            .enabledExtensionCount = glfw_extesion_count,
+            .ppEnabledExtensionNames = extensions,
+        };
+        VkResult res;
+        if ((res = vkCreateInstance(&inf, nullptr, &mvkinstance) 
+            )!= VK_SUCCESS) 
+        {
+            return false;
+        }
+        return true;
+    }
+    b8 manager::create_device()
+    {
+        std::vector<VkPhysicalDevice> physical_devices;
+        u32 physical_device_count = 0;
+        vkEnumeratePhysicalDevices(
+                mvkinstance,
+                &physical_device_count ,
+                nullptr
+                );
+        physical_devices.resize(physical_device_count);
+        if(vkEnumeratePhysicalDevices(
+                    mvkinstance,
+                    &physical_device_count,
+                    &(physical_devices[0])) != VK_SUCCESS)
+        {
+            return false;
+        }
+
+        // enumereate physicalDevices and find one suitable for graphics
+        i32 index = -1;
+        u32 format_count = 0;
+        u32 present_count = 0;
+        for (auto& d : physical_devices)
+        {
+            index++;
+            mvk_graphics_idx = -1;
+            mvk_present_idx = -1;
+            format_count = 0;
+            present_count = 0;
+            // check extensions:
+            u32 extensions_count;
+            vkEnumerateDeviceExtensionProperties(d,
+                    nullptr, 
+                    &extensions_count,
+                    nullptr);
+            std::vector<VkExtensionProperties> vkexts(extensions_count);
+            vkEnumerateDeviceExtensionProperties(d,
+                    nullptr,
+                    &extensions_count,
+                    vkexts.data());
+
+
+            std::set<std::string> required_extensions_set(
+                    grequired_extensions.begin(), grequired_extensions.end()
+                    );
+
+            b8 extension_found = false;
+            for (const auto& e : vkexts)
+            {
+                required_extensions_set.erase(e.extensionName);
+                if (required_extensions_set.empty()) 
+                {
+                    extension_found = true;
+                    break;
+                }
+            }
+            if (!extension_found) continue;
+
+            // swap chain support
+
+            vkGetPhysicalDeviceSurfaceFormatsKHR(
+                    d,
+                    mvksurface,
+                    &format_count,
+                    nullptr);
+            if (format_count == 0) continue;
+
+            vkGetPhysicalDeviceSurfacePresentModesKHR(
+                    d,
+                    mvksurface,
+                    &present_count,
+                    nullptr);
+
+            if (present_count == 0) continue;
+
+            // get queue family
+            u32 queue_family_properties_count;
+            vkGetPhysicalDeviceQueueFamilyProperties(d, &queue_family_properties_count, nullptr);
+            std::vector<VkQueueFamilyProperties> queue_family_properties(queue_family_properties_count);
+            vkGetPhysicalDeviceQueueFamilyProperties(
+                    d,
+                    &queue_family_properties_count,
+                    queue_family_properties.data());
+
+            // check queue family supports graphics
+            i32 family_idx = 0;
+            b8 supports_graphics = false;
+            for (auto& f : queue_family_properties)
+            {
+                if (f.queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                {
+                    mvk_graphics_idx = family_idx;
+                }
+                VkBool32 present_support = false;
+                vkGetPhysicalDeviceSurfaceSupportKHR(
+                        d, family_idx, mvksurface,
+                        &present_support);
+                if (present_support)
+                {
+                    mvk_present_idx = family_idx;
+                }
+                if (mvk_present_idx > -1 && mvk_graphics_idx > -1)
+                {
+                    supports_graphics = true;
+                    break;
+                }
+                family_idx++;
+            }
+            if (!supports_graphics) continue;
+            break;
+        }
+        // get physical device properties
+
+        if (index >= physical_device_count) return false;
+        auto& physical_device = physical_devices[index];
+
+        // get properties of physical device
+        vkGetPhysicalDeviceProperties(physical_device, &mpd.properties);
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &mpd.memory_properties);
+
+        // prepate for swap chain creation
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                physical_device,
+                mvksurface,
+                &mswap_details.capabilities);
+
+
+        mswap_details.surface_formats.resize(format_count);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(
+                physical_device,
+                mvksurface,
+                &format_count,
+                mswap_details.surface_formats.data());
+
+        mswap_details.present_modes.resize(present_count);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(
+                physical_device,
+                mvksurface,
+                &present_count,
+                mswap_details.present_modes.data());
+
+        // logical device creation
+        std::vector<VkDeviceQueueCreateInfo> queue_create_infos;
+        std::set<u32> unique_queue_idxs = 
+        {
+            (u32)mvk_present_idx,
+            (u32)mvk_graphics_idx
+        };
+
+        f32 priority = 1.0f;
+        for (auto idx : unique_queue_idxs)
+        {
+            VkDeviceQueueCreateInfo info = 
+            {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = idx,
+                .queueCount = 1,
+                .pQueuePriorities = &priority,
+            };
+            queue_create_infos.push_back(info);
+        }
+        VkPhysicalDeviceFeatures features = 
+        {
+            .depthClamp = VK_TRUE,
+            .samplerAnisotropy = VK_TRUE,
+        };
+        VkDeviceCreateInfo device_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = (u32)queue_create_infos.size(),
+            .pQueueCreateInfos = queue_create_infos.data(),
+            .enabledExtensionCount = (u32)grequired_extensions.size(),
+            .ppEnabledExtensionNames = grequired_extensions.data(),
+            .pEnabledFeatures = &features,
+        };
+
+        if (vkCreateDevice(
+                    physical_device, 
+                    &device_info,
+                    nullptr,
+                    &mvkdevice
+                    ) != VK_SUCCESS)
+        {
+            std::cerr << "Err creating device;";
+            return false;
+        }
+        vkGetDeviceQueue(
+                mvkdevice,
+                (u32)mvk_graphics_idx,
+                0,
+                &(mqueues.graphics_queue)
+                );
+        vkGetDeviceQueue(
+                mvkdevice,
+                (u32)mvk_present_idx,
+                0,
+                &(mqueues.present_queue)
+                );
+
+        return true;
+    }
+    b8 manager::create_swap_chain()
+    {
+        // set format
+        VkSurfaceFormatKHR swap_format = mswap_details.surface_formats[0];
+        for (const auto& format : mswap_details.surface_formats)
+        {
+            if (format.format == VK_FORMAT_R8G8B8A8_SRGB 
+                    && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            {
+                swap_format = format;
+                break;
+            }
+        }
+        mswap_details.chosen_format = swap_format;
+
+        // set present mode
+        VkPresentModeKHR swap_present_mode = VK_PRESENT_MODE_FIFO_KHR;
+        for (const auto& present : mswap_details.present_modes)
+        {
+            if (present == VK_PRESENT_MODE_MAILBOX_KHR)
+            {
+                swap_present_mode = present;
+                break;
+            }
+        }
+        mswap_details.chosen_present_mode = swap_present_mode;
+
+        // choose extent (full screen for now)
+        i32 w,  h;
+        glfwGetFramebufferSize(mwindow->get_window(), &w, &h);
+        VkExtent2D swap_extent = {.width = (u32)w, .height = (u32)h};
+
+        mvk_extent = swap_extent;
+
+
+        b8 choose_max = 
+            (mswap_details.capabilities.maxImageCount > 0) && 
+            (mswap_details.capabilities.minImageCount > mswap_details.capabilities.maxImageCount);
+        u32 img_count = 
+            (mswap_details.capabilities.minImageCount + 1) * !choose_max +
+            (mswap_details.capabilities.maxImageCount) * choose_max;
+        u32 queue_family_indices[] = {
+            (u32)mvk_graphics_idx,
+            (u32)mvk_present_idx
+        };
+
+        VkSwapchainCreateInfoKHR create_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .surface = mvksurface,
+            .minImageCount = img_count,
+            .imageFormat = swap_format.format,
+            .imageColorSpace = swap_format.colorSpace,
+            .imageExtent = swap_extent,
+            .imageArrayLayers = 1,
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+            .preTransform = mswap_details.capabilities.currentTransform,
+            .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .presentMode = swap_present_mode,
+            .clipped = VK_TRUE,
+        };
+        if (mvk_graphics_idx != mvk_present_idx)
+        {
+            create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            create_info.queueFamilyIndexCount = 2;
+            create_info.pQueueFamilyIndices = &queue_family_indices[0];
+        }
+        if (vkCreateSwapchainKHR(
+                    mvkdevice,&create_info, nullptr,
+                    &mvk_swapchain) != VK_SUCCESS)
+        {
+            return false;
+        }
+
+        // creating images and image views
+        u32 swap_chain_images_count;
+        vkGetSwapchainImagesKHR(mvkdevice, mvk_swapchain,
+                &swap_chain_images_count, nullptr);
+        mvk_swap_images.resize(swap_chain_images_count);
+        vkGetSwapchainImagesKHR(mvkdevice, mvk_swapchain,
+                &swap_chain_images_count, mvk_swap_images.data());
+
+        mvk_swap_image_views.resize(swap_chain_images_count);
+
+        for (u32 i = 0; i < swap_chain_images_count; i++)
+        {
+            VkImageViewCreateInfo iv_create_info = 
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = mvk_swap_images[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = mswap_details.chosen_format.format,
+                .components = {
+                    .r = VK_COMPONENT_SWIZZLE_R,
+                    .g = VK_COMPONENT_SWIZZLE_G,
+                    .b = VK_COMPONENT_SWIZZLE_B,
+                    .a = VK_COMPONENT_SWIZZLE_A,
+                },
+                .subresourceRange = 
+                {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
+            if (vkCreateImageView(mvkdevice, &iv_create_info,
+                        nullptr, &mvk_swap_image_views[i]) != VK_SUCCESS)
+            {
+                mvk_swap_images.clear();
+                mvk_swap_image_views.clear();
+                return false;
+            }
+        }
+
+        return true;
+    }
+    b8 manager::create_sync_objects()
+    {
+        VkSemaphoreCreateInfo sem_info =
+        {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+        };
+        if ((vkCreateSemaphore(mvkdevice, &sem_info, 
+                        nullptr,&msync.simage_available) != VK_SUCCESS))
+        {
+            return false;
+        }
+        if ((vkCreateSemaphore(mvkdevice, &sem_info, 
+                        nullptr,&msync.srender_finished) != VK_SUCCESS))
+        {
+            return false;
+        }
+
+        VkFenceCreateInfo fence_info =
+        {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        if (vkCreateFence(mvkdevice, &fence_info,
+                    nullptr, & msync.finflight) != VK_SUCCESS)
+        {
+            return false;
+        }
+        return true;
+    }
+    b8 manager::create_default_render_pass()
+    {
+        VkAttachmentDescription colour_attachment = 
+        {
+            .format = mswap_details.chosen_format.format,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+        };
+        VkAttachmentReference colour_ref = 
+        {
+            .attachment = 0,
+            .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        };
+
+
+        VkSubpassDescription subpass_desc = 
+        {
+            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &colour_ref,
+        };
+        VkAttachmentDescription attachments[2] = {colour_attachment};
+        VkRenderPassCreateInfo render_pass_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+            .attachmentCount = 1,
+            .pAttachments = &attachments[0],
+            .subpassCount = 1,
+            .pSubpasses = &subpass_desc,
+        };
+
+        mvk_render_passes.resize(1);
+        if(vkCreateRenderPass(mvkdevice, &render_pass_info,
+                    nullptr, &mvk_render_passes[0]) != VK_SUCCESS)
+        {
+            return false;
+        }
+        return create_frame_buffers();
+    }
+    b8 manager::create_frame_buffers(u32 idx)
+    {
+        mvk_frame_buffers.resize(mvk_swap_image_views.size());
+        for (i32 i = 0; i < mvk_frame_buffers.size(); i++)
+        {
+            VkImageView img_views[1] = {mvk_swap_image_views[i]};
+            VkFramebufferCreateInfo create_info = 
+            {
+                .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                .renderPass = mvk_render_passes[idx],
+                .attachmentCount = 1,
+                .pAttachments = &img_views[0],
+                .width = mvk_extent.width,
+                .height = mvk_extent.height,
+                .layers = 1,
+            };
+            if (vkCreateFramebuffer(mvkdevice, &create_info,
+                        nullptr, &mvk_frame_buffers[i]) != VK_SUCCESS) 
+            {
+                return false;
+            }
+        }
+        return true;
+
+    }
+    b8 manager::create_command_structures()
+    {
+        VkCommandPoolCreateInfo cp_create = 
+        {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = (u32)mvk_graphics_idx,
+        };
+        if (vkCreateCommandPool(mvkdevice, &cp_create,
+                    nullptr, &mvk_command_pool) != VK_SUCCESS)
+        {
+            return false;
+        }
+        VkCommandBufferAllocateInfo cb_alloc =
+        {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = mvk_command_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        if (vkAllocateCommandBuffers(mvkdevice, &cb_alloc,
+                    &mvk_command_buffer) != VK_SUCCESS)
+        {
+            return false;
+        }
+        return true;
+    }
+    b8 manager::create_shader(const shader& sh)
+    {
+
+        const auto& programs = sh.get_programs();
+        mvk_shader_modules.resize(programs.size());
+        for (i32 i = 0 ; i < programs.size(); i++)
+        {
+            VkShaderModuleCreateInfo create_info= {};
+            create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            create_info.codeSize = programs[i].size();
+            create_info.pCode =(const u32*)(programs[i].data());
+            vkCreateShaderModule(mvkdevice, &create_info,
+                    nullptr, &mvk_shader_modules[i]);
+        }
+        return true;
+    }
+    b8 manager::create_default_graphics_pipeline()
+    {
+        mvk_pipeline.emplace_back();
+        mvk_pipeline_layout.emplace_back();
+        VkPipelineShaderStageCreateInfo vert_shader_info
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                .module = mvk_shader_modules[0],
+                .pName = "main"
+        };
+
+        VkPipelineVertexInputStateCreateInfo vertex_input_info
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                .vertexBindingDescriptionCount = 0,
+                .pVertexBindingDescriptions = nullptr,
+                .vertexAttributeDescriptionCount = 0,
+                .pVertexAttributeDescriptions = nullptr,
+        };
+
+        VkPipelineShaderStageCreateInfo frag_shader_info
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                .module = mvk_shader_modules[1],
+                .pName = "main"
+        };
+        VkPipelineShaderStageCreateInfo shader_stages[] = 
+        {
+            vert_shader_info, 
+            frag_shader_info
+        };
+
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly.primitiveRestartEnable = VK_FALSE;
+
+        VkPipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_TRUE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendAttachmentState color_blend_attachment
+        {
+            .blendEnable = VK_TRUE,
+                .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                .colorBlendOp = VK_BLEND_OP_ADD,
+                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                .alphaBlendOp = VK_BLEND_OP_ADD,
+                .colorWriteMask = 
+                    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT 
+                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        };
+        VkPipelineColorBlendStateCreateInfo color_blending =
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .logicOpEnable = VK_FALSE,
+            .logicOp = VK_LOGIC_OP_COPY,
+            .attachmentCount = 1,
+            .pAttachments = &color_blend_attachment,
+            .blendConstants = { 0.0f, 0.0f, 0.0f, 0.0f},
+        };
+        std::vector<VkDynamicState> dynamic_states = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_SCISSOR,
+            VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
+        };
+        VkPipelineDynamicStateCreateInfo dynamic_state{};
+        dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+        dynamic_state.pDynamicStates = dynamic_states.data();
+
+        VkPipelineLayoutCreateInfo pipeline_layout_info{};
+        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        vkCreatePipelineLayout(mvkdevice, &pipeline_layout_info,
+                nullptr, &mvk_pipeline_layout[0]);
+
+        VkGraphicsPipelineCreateInfo pipeline_info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .stageCount = 2,
+            .pStages = shader_stages,
+
+            .pVertexInputState = &vertex_input_info,
+            .pInputAssemblyState = &input_assembly,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisampling,
+            .pColorBlendState = &color_blending,
+            .pDynamicState = &dynamic_state,
+
+            .layout = mvk_pipeline_layout[0],
+            .renderPass = mvk_render_passes[0],
+            .subpass = 0,
+        };
+        vkCreateGraphicsPipelines(
+                mvkdevice,VK_NULL_HANDLE,1,
+                &pipeline_info, nullptr,
+                &mvk_pipeline[0]
+                );
+        for (auto module : mvk_shader_modules)
+        {
+            vkDestroyShaderModule(mvkdevice, module, nullptr);
+        }
+        return true;
+    }
+    void manager::clear_swap_chain()
+    {
+        for (i32 i = 0; i < mvk_frame_buffers.size(); i++)
+        {
+            vkDestroyFramebuffer(mvkdevice, mvk_frame_buffers[i],
+                    nullptr);
+            vkDestroyImageView(mvkdevice, 
+                    mvk_swap_image_views[i], nullptr);
+        }
+        vkDestroySwapchainKHR(
+                mvkdevice, mvk_swapchain,
+                nullptr
+                );
+    }
+    b8 manager::recreate_swap_chain()
+    {
+        vkDeviceWaitIdle(mvkdevice);
+        clear_swap_chain();
+        return create_swap_chain() && create_frame_buffers(mcurr_render_pass);
+    }
+
+}}}
