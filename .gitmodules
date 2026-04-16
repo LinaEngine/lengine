@@ -1,0 +1,3 @@
+[submodule "lmath"]
+	path = lmath
+	url = git@github-personal:LinaEngine/lmath.git
