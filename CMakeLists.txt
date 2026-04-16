@@ -12,9 +12,14 @@ FILE(GLOB SRC
     "src/tests/*.cc"
     "src/graphics/*.cc"
     "src/graphics_backend/*.cc"
+    "src/ecs/components/*.cc"
+    "src/ecs/components/colliders/*.cc"
     )
+
 add_executable(${PROJECT_NAME} ${SRC})
 set(CMAKE_BUILD_TYPE Debug)
+
+target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(${PROJECT_NAME} GL dl glfw vulkan)
 

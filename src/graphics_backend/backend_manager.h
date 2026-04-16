@@ -44,6 +44,7 @@ namespace lina { namespace graphics { namespace backend {
             VkDeviceMemory memory;
         };
         public:
+        friend class buffer;
             manager() : mwindow(nullptr){}
             b8 init(window* win);
             inline b8 request_render_pass() {return false;};
@@ -62,6 +63,8 @@ namespace lina { namespace graphics { namespace backend {
             b8 create_command_structures();
             void clear_swap_chain();
             b8 recreate_swap_chain();
+        public:
+            VkDevice mvkdevice;
         private:
             window* mwindow;
             VkInstance mvkinstance;
@@ -69,7 +72,6 @@ namespace lina { namespace graphics { namespace backend {
             vk_physical_device mpd;
             vk_swap_chain_details mswap_details;
             vk_queues mqueues;
-            VkDevice mvkdevice;
             i32 mvk_present_idx = -1;
             i32 mvk_graphics_idx = -1;
             std::vector<VkImage> mvk_swap_images;

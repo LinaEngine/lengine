@@ -29,4 +29,36 @@ namespace lina { namespace graphics { namespace backend {
         file.close();
         return true;
     }
+    void shader::combine_uniforms()
+    {
+        m_uniforms.clear();
+        m_uniforms.reserve(m_static_uniforms.size() + m_dynamic_uniforms.size());
+        for (auto& u : m_static_uniforms)
+        {
+            m_uniforms.push_back(u);
+        }
+        for (auto& u : m_dynamic_uniforms)
+        {
+            m_uniforms.push_back(u);
+        }
+    }
+    void shader::add_uniform(Uniform&& u)
+    {
+        switch(u.type)
+        {
+            case UniformType::Static:
+                {
+                    m_static_uniforms.push_back(u);
+                }
+                break;
+            case UniformType::Dynamic:
+                {
+                    m_dynamic_uniforms.push_back(u);
+                }
+        };
+    }
+    void shader::add_ps(PushConstant&& ps)
+    {
+        m_push_constants.push_back(ps);
+    }
 }}}
