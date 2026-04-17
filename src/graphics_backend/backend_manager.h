@@ -1,6 +1,8 @@
 #ifndef BACKEND_MANAGER_H
 #define BACKEND_MANAGER_H
 #include "../core/common.h"
+#include "buffers/vertex_buffer.h"
+#include "resource_manager.h"
 #include "shader.h"
 #include "window.h"
 #include <vulkan/vulkan_core.h>
@@ -49,7 +51,7 @@ namespace lina { namespace graphics { namespace backend {
             b8 init(window* win);
             inline b8 request_render_pass() {return false;};
             b8 create_default_graphics_pipeline();
-            b8 create_shader(const shader& shader);
+            b8 create_pipeline(buffers::vertex& vb, const shader& shader, i32 vertex_idx, i32 shader_idx);
             void begin_draw();
             void bind(u32 idx = 0);
             void end_draw();
@@ -63,6 +65,10 @@ namespace lina { namespace graphics { namespace backend {
             b8 create_command_structures();
             void clear_swap_chain();
             b8 recreate_swap_chain();
+            b8 create_shader(const shader& sh);
+            VkGraphicsPipelineCreateInfo default_pipeline_settings();
+            VkDescriptorSetLayout create_ds_layout(const shader& s);
+
         public:
             VkDevice mvkdevice;
         private:
@@ -92,6 +98,7 @@ namespace lina { namespace graphics { namespace backend {
             u32 mcurr_pipeline;
             std::vector<vk_image> mcol_images;
             std::vector<vk_image> mdepth_images;
+            resource_manager m_resource_manager;
 
     };
 }}}

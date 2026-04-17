@@ -13,13 +13,20 @@ namespace lina { namespace graphics {
             void bind(u32 idx = 0);
             void load_default_shaders();
             u32 add_shader(const backend::shader& s);
-            u32 add_mesh(backend::vblayout& layout, const std::vector<f64>& verts, const std::vector<u32>&);
+            u32 add_mesh(
+                    backend::vblayout& layout, const std::vector<f64>& verts, const std::vector<u32>&ind, i32 shader_idx = -1);
+            inline void set_mesh_shader(i32 mesh_id, i32 shader_id);
+            void submit_scene();
         private:
             backend::manager mmanger;
             std::vector<backend::buffers::vertex> mvertex_buffers;
             std::vector<backend::buffers::index> mindex_buffers;
             std::vector<backend::shader> mshaders;
-            std::vector<i32> shader_ids;
+            std::vector<i32> mshader_mappings;
     };
+    inline void renderer::set_mesh_shader(i32 mesh_id, i32 shader_id)
+    {
+        mshader_mappings[mesh_id] = shader_id;
+    }
 }}
 #endif

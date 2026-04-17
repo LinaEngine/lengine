@@ -1,17 +1,17 @@
 #include "shader.h"
 #include <fstream>
 namespace lina { namespace graphics { namespace backend {
-    i32 shader::add_program(const char* src)
+    i32 shader::add_program(const char* src, ShaderStage st)
     {
         auto idx = mprograms.size();
         mprograms.emplace_back();
-        if (load_program(idx, src))
+        if (load_program(idx, src, st))
         {
             return idx;
         }
         return -1;
     }
-    b8 shader::load_program(i32 idx, const char* src)
+    b8 shader::load_program(i32 idx, const char* src, ShaderStage st)
     {
         if (idx > mprograms.size()-1) 
         {
@@ -23,10 +23,11 @@ namespace lina { namespace graphics { namespace backend {
             return false;
         }
         u32 file_size = (u32) file.tellg();
-        mprograms[idx].resize(file_size);
+        mprograms[idx].program.resize(file_size);
         file.seekg(0);
-        file.read(mprograms[idx].data(), file_size);
+        file.read(mprograms[idx].program.data(), file_size);
         file.close();
+        mprograms[idx].stage = st;
         return true;
     }
     void shader::combine_uniforms()

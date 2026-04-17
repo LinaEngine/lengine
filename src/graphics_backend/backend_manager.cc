@@ -1,5 +1,6 @@
 #include "backend_manager.h"
 #include "backend_settings.h"
+#include "buffers/vertex_buffer.h"
 #include <GLFW/glfw3.h>
 #include <cinttypes>
 #include <iostream>
@@ -625,20 +626,134 @@ namespace lina { namespace graphics { namespace backend {
     }
     b8 manager::create_shader(const shader& sh)
     {
-
         const auto& programs = sh.get_programs();
         mvk_shader_modules.resize(programs.size());
         for (i32 i = 0 ; i < programs.size(); i++)
         {
             VkShaderModuleCreateInfo create_info= {};
             create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-            create_info.codeSize = programs[i].size();
-            create_info.pCode =(const u32*)(programs[i].data());
+            create_info.codeSize = programs[i].program.size();
+            create_info.pCode =(const u32*)(programs[i].program.data());
             vkCreateShaderModule(mvkdevice, &create_info,
                     nullptr, &mvk_shader_modules[i]);
         }
         return true;
     }
+    VkDescriptorSetLayout manager::create_ds_layout(const shader& s)
+    {
+        auto bindingsCount = s.get_binding_count();
+        auto uniformCount = s.get_uniform_count();
+        const auto& uniformRef = s.get_uniforms();
+        std::vector<VkDescriptorSetLayoutBinding> bindings;
+        bindings.reserve(bindingsCount);
+
+        VkDescriptorSetLayout setLayout;
+
+        for (auto& ur : uniformRef)
+        {
+            VkDescriptorSetLayoutBinding uboLayoutBinding
+            {
+                .binding = ur.binding,
+                    .descriptorType = ur.type, 
+                    .descriptorCount = 1,
+                    .stageFlags = (VkShaderStageFlags)ur.stage, 
+                    .pImmutableSamplers = nullptr
+            };
+            bindings.push_back(uboLayoutBinding);
+        }
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                .bindingCount = static_cast<u32>(bindings.size()),
+                .pBindings = bindings.data()
+        };
+
+        if(vkCreateDescriptorSetLayout(
+                    mvkdevice,
+                    &layoutInfo,
+                    nullptr,
+                    &setLayout) != VK_SUCCESS)
+            std::cerr<<"No layout created!\n";
+        return setLayout;
+    }
+    b8 manager::create_pipeline(buffers::vertex& vb, const shader& shader, i32 vertex_idx, i32 shader_idx)
+    {
+        const auto& mod = shader.get_programs();
+        const auto& refPs = shader.get_ps();
+        auto count = mod.size();
+        i32 offset = mvk_shader_modules.size();
+        auto* pstages = m_resource_manager.get_shader_info_pointer(shader_idx);
+        if (pstages == nullptr)
+        {
+            auto module_offset = mvk_shader_modules.size();
+            create_shader(shader);
+            for (const auto& p : mod)
+            {
+                VkPipelineShaderStageCreateInfo shader_info
+                {
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                        .stage = p.stage,
+                        .module = mvk_shader_modules[module_offset++],
+                        .pName = "main"
+                };
+                m_resource_manager.add_shader_stage_info(shader_info);
+            }
+        }
+        pstages = m_resource_manager.get_shader_info_pointer(shader_idx);
+
+        auto* psranges = m_resource_manager.get_ps_range_pointer(shader_idx);
+        if (psranges == nullptr)
+        {
+            for (const auto& rps : refPs)
+            {
+                VkPushConstantRange psRange =
+                {
+                    .stageFlags = (VkShaderStageFlags)rps.stage,
+                    .offset = rps.offset,
+                    .size = rps.size,
+                };
+                m_resource_manager.add_ps(psRange);
+            }
+        }
+        psranges = m_resource_manager.get_ps_range_pointer(shader_idx);
+
+        auto* pdset_layout = m_resource_manager.get_dset_layout_pointer(shader_idx);
+        if (pdset_layout == nullptr)
+        {
+            auto setlayout = create_ds_layout(shader);
+            m_resource_manager.add_dset_layout(setlayout);
+        }
+        pdset_layout = m_resource_manager.get_dset_layout_pointer(shader_idx);
+
+        auto* pvertex_input = m_resource_manager.get_vertex_info_pointer(vertex_idx);
+        if (pvertex_input == nullptr)
+        {
+            VkPipelineVertexInputStateCreateInfo vinput_info;
+            auto attributeDescriptions = vb.get_attribute_descriptions();
+            auto bindingDescription = vb.get_binding_description();
+            vinput_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+            vinput_info.vertexBindingDescriptionCount = 1;
+            vinput_info.pVertexBindingDescriptions = &bindingDescription;
+            vinput_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+            vinput_info.pVertexAttributeDescriptions = attributeDescriptions.data();
+            m_resource_manager.add_vertex_input_info(vinput_info);
+        }
+        pvertex_input = m_resource_manager.get_vertex_info_pointer(vertex_idx);
+
+        auto info = default_pipeline_settings();
+        info.stageCount = count;
+        info.pStages = pstages;
+        info.pVertexInputState = pvertex_input;
+
+        VkPipelineLayoutCreateInfo pipeline_layout_info{};
+        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        vkCreatePipelineLayout(mvkdevice, &pipeline_layout_info,
+                nullptr, &mvk_pipeline_layout[0]);
+    }
+
+    
     b8 manager::create_default_graphics_pipeline()
     {
         mvk_pipeline.emplace_back();
@@ -673,6 +788,31 @@ namespace lina { namespace graphics { namespace backend {
             frag_shader_info
         };
 
+        VkPipelineLayoutCreateInfo pipeline_layout_info{};
+        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+        vkCreatePipelineLayout(mvkdevice, &pipeline_layout_info,
+                nullptr, &mvk_pipeline_layout[0]);
+
+        auto info = default_pipeline_settings();
+        info.stageCount = 2;
+        info.pVertexInputState = &vertex_input_info;
+        info.layout = mvk_pipeline_layout[0];
+        info.renderPass = mvk_render_passes[0];
+        info.subpass = 0;
+        vkCreateGraphicsPipelines(
+                mvkdevice,VK_NULL_HANDLE,1,
+                &info, nullptr,
+                &mvk_pipeline[0]
+                );
+        for (auto module : mvk_shader_modules)
+        {
+            vkDestroyShaderModule(mvkdevice, module, nullptr);
+        }
+        return true;
+    }
+    VkGraphicsPipelineCreateInfo manager::default_pipeline_settings()
+    {
         VkPipelineInputAssemblyStateCreateInfo input_assembly{};
         input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -730,40 +870,19 @@ namespace lina { namespace graphics { namespace backend {
         dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
         dynamic_state.pDynamicStates = dynamic_states.data();
 
-        VkPipelineLayoutCreateInfo pipeline_layout_info{};
-        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-
-        vkCreatePipelineLayout(mvkdevice, &pipeline_layout_info,
-                nullptr, &mvk_pipeline_layout[0]);
-
         VkGraphicsPipelineCreateInfo pipeline_info = 
         {
             .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            .stageCount = 2,
-            .pStages = shader_stages,
-
-            .pVertexInputState = &vertex_input_info,
             .pInputAssemblyState = &input_assembly,
             .pViewportState = &viewport_state,
             .pRasterizationState = &rasterizer,
             .pMultisampleState = &multisampling,
             .pColorBlendState = &color_blending,
             .pDynamicState = &dynamic_state,
-
-            .layout = mvk_pipeline_layout[0],
-            .renderPass = mvk_render_passes[0],
             .subpass = 0,
         };
-        vkCreateGraphicsPipelines(
-                mvkdevice,VK_NULL_HANDLE,1,
-                &pipeline_info, nullptr,
-                &mvk_pipeline[0]
-                );
-        for (auto module : mvk_shader_modules)
-        {
-            vkDestroyShaderModule(mvkdevice, module, nullptr);
-        }
-        return true;
+
+        return pipeline_info;
     }
     void manager::clear_swap_chain()
     {
