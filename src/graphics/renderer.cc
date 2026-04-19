@@ -11,9 +11,27 @@ namespace lina { namespace graphics {
     }
     void renderer::bind(u32 idx)
     {
+        mcurr_pipeline = idx;
         mmanger.bind(idx);
     }
-    u32 renderer::add_mesh(backend::vblayout& layout, const std::vector<f64>& verts, const std::vector<u32>& indices, i32 shader_idx)
+    void renderer::render()
+    {
+        auto vertId = mshader_mappings[mcurr_pipeline].second;
+        auto vb = mvertex_buffers[vertId];
+        auto ib = mindex_buffers[vertId];
+        VkBuffer vbs[] = vb.m_specs.buffer;
+        VkDeviceSize offsets[] = {0};
+
+        vkCmdBindVertexBuffers(mmanger.mvk_command_buffer, 0,  1, vbs, offsets);
+
+        vkCmdBindIndexBuffer(mmanger.mvk_command_buffer,
+                ib.m_specs.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        vkCmdDrawIndexed(
+                mmanger.mvk_command_buffer,
+                ib.m_count, 1, 0, 0, 0);
+    }
+    u32 renderer::add_mesh(backend::vblayout& layout, const std::vector<f64>& verts, const std::vector<u32>& indices)
     {
         backend::buffers::vertex vb;
         vb.init(&mmanger, layout);
@@ -27,7 +45,6 @@ namespace lina { namespace graphics {
                 indices.size() * sizeof(indices[0]));
         mindex_buffers.push_back(ib);
 
-        mshader_mappings.push_back(shader_idx);
         return mindex_buffers.size() - 1;
     }
     u32 renderer::add_shader(const backend::shader& s)
@@ -35,13 +52,17 @@ namespace lina { namespace graphics {
         mshaders.push_back(s);
         return mshaders.size() - 1;
     }
+    u32 renderer::add_mapping(u32 vidx, u32 sidx)
+    {
+        mshader_mappings.push_back({vidx, sidx});
+    }
 
     void renderer::submit_scene()
     {
         mmanger.create_default_render_pass();
-        for (i32 idx = 0; idx < mshader_mappings.size(); idx++)
+        for (const auto& [vidx, sidx] : mshader_mappings)
         {
-            mmanger.create_pipeline(mvertex_buffers[idx], mshaders[mshader_mappings[idx]], idx, mshader_mappings[idx]);
+            mmanger.create_pipeline(mvertex_buffers[vidx], mshaders[sidx], vidx, sidx);
         }
     }
 

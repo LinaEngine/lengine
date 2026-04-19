@@ -1,10 +1,12 @@
-#pragma once
+#ifndef BACKEND_BUFFER_H
+#define BACKEND_BUFFER_H
 #include <vulkan/vulkan_core.h>
 #include "../utils.h"
 #include <lmath/types.h>
 #include "../backend_manager.h"
 #include <iostream>
 namespace lina{ namespace graphics{ namespace backend{
+    class manager;
     class buffer
     {
         struct specs
@@ -28,4 +30,4 @@ namespace lina{ namespace graphics{ namespace backend{
 
     };
 }}}
-
+#endif

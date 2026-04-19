@@ -1,19 +1,21 @@
 #ifndef BACKEND_MANAGER_H
 #define BACKEND_MANAGER_H
 #include "../core/common.h"
-#include "buffers/vertex_buffer.h"
 #include "resource_manager.h"
 #include "shader.h"
 #include "window.h"
 #include <vulkan/vulkan_core.h>
 #include "backend_settings.h"
 namespace lina { namespace graphics { namespace backend {
+    namespace buffers 
+    {
+        class vertex;
+    }
     class manager 
     {
         struct vk_physical_device 
         {
-            VkPhysicalDeviceProperties properties;
-            VkPhysicalDeviceMemoryProperties memory_properties;
+            VkPhysicalDeviceProperties properties; VkPhysicalDeviceMemoryProperties memory_properties;
         };
         struct vk_queues 
         {
@@ -51,11 +53,12 @@ namespace lina { namespace graphics { namespace backend {
             b8 init(window* win);
             inline b8 request_render_pass() {return false;};
             b8 create_default_graphics_pipeline();
-            b8 create_pipeline(buffers::vertex& vb, const shader& shader, i32 vertex_idx, i32 shader_idx);
+            b8 create_graphics_pipeline(buffers::vertex& vb, shader& shader, i32 vertex_idx, i32 shader_idx);
             void begin_draw();
             void bind(u32 idx = 0);
             void end_draw();
             b8 create_default_render_pass();
+            void render();
         private:
             b8 create_device();
             b8 create_vulkan_instance();
@@ -68,14 +71,17 @@ namespace lina { namespace graphics { namespace backend {
             b8 create_shader(const shader& sh);
             VkGraphicsPipelineCreateInfo default_pipeline_settings();
             VkDescriptorSetLayout create_ds_layout(const shader& s);
+            VkDescriptorPool create_dpool(const shader& s);
+            void add_dsets(const shader& s, i32 shader_idx);
 
         public:
             VkDevice mvkdevice;
+            vk_physical_device mpd;
+            VkCommandBuffer mvk_command_buffer;
         private:
             window* mwindow;
             VkInstance mvkinstance;
             VkSurfaceKHR mvksurface;
-            vk_physical_device mpd;
             vk_swap_chain_details mswap_details;
             vk_queues mqueues;
             i32 mvk_present_idx = -1;
@@ -88,13 +94,12 @@ namespace lina { namespace graphics { namespace backend {
             std::vector<VkFramebuffer> mvk_frame_buffers;
             VkExtent2D mvk_extent;
 
-            VkCommandBuffer mvk_command_buffer;
             VkCommandPool mvk_command_pool;
             std::vector<VkShaderModule> mvk_shader_modules;
             std::vector<VkPipelineLayout> mvk_pipeline_layout;
             std::vector<VkPipeline> mvk_pipeline;
             u32 mcurr_img_idx;
-            u32 mcurr_render_pass;
+            u32 mcurr_render_pass = 0;
             u32 mcurr_pipeline;
             std::vector<vk_image> mcol_images;
             std::vector<vk_image> mdepth_images;
