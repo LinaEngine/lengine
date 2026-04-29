@@ -1,4 +1,6 @@
 #include "render.h"
+#include <utility>
+#include <vulkan/vulkan_core.h>
 
 namespace lina { namespace graphics {
     void renderer::begin_draw()
@@ -16,36 +18,28 @@ namespace lina { namespace graphics {
     }
     void renderer::render()
     {
+        PFN_vkCmdSetPolygonModeEXT vkCmdSetPolygonModeEXT = 
+            reinterpret_cast<PFN_vkCmdSetPolygonModeEXT>(vkGetDeviceProcAddr(
+                        mmanger.mvkdevice, "vkCmdSetPolygonModeEXT"));
+        vkCmdSetPrimitiveTopology(mmanger.mvk_command_buffer,
+                (VkPrimitiveTopology)msettings.sprimitive);
+        vkCmdSetPolygonModeEXT(mmanger.mvk_command_buffer,
+                (VkPolygonMode)msettings.sdraw);
         auto vertId = mshader_mappings[mcurr_pipeline].second;
         auto vb = mvertex_buffers[vertId];
         auto ib = mindex_buffers[vertId];
-        VkBuffer vbs[] = vb.m_specs.buffer;
+        VkBuffer vbs[] = {vb.get_buffer()};
+        VkBuffer ib_buf = ib.get_buffer();
         VkDeviceSize offsets[] = {0};
 
         vkCmdBindVertexBuffers(mmanger.mvk_command_buffer, 0,  1, vbs, offsets);
 
         vkCmdBindIndexBuffer(mmanger.mvk_command_buffer,
-                ib.m_specs.buffer, 0, VK_INDEX_TYPE_UINT32);
+                ib_buf, 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdDrawIndexed(
                 mmanger.mvk_command_buffer,
-                ib.m_count, 1, 0, 0, 0);
-    }
-    u32 renderer::add_mesh(backend::vblayout& layout, const std::vector<f64>& verts, const std::vector<u32>& indices)
-    {
-        backend::buffers::vertex vb;
-        vb.init(&mmanger, layout);
-        vb.construct(&verts[0],
-                verts.size() * sizeof(verts[0]));
-        mvertex_buffers.push_back(vb);
-
-        backend::buffers::index ib;
-        ib.init(&mmanger);
-        ib.construct(&indices[0],
-                indices.size() * sizeof(indices[0]));
-        mindex_buffers.push_back(ib);
-
-        return mindex_buffers.size() - 1;
+                ib.get_count(), 1, 0, 0, 0);
     }
     u32 renderer::add_shader(const backend::shader& s)
     {
@@ -54,7 +48,8 @@ namespace lina { namespace graphics {
     }
     u32 renderer::add_mapping(u32 vidx, u32 sidx)
     {
-        mshader_mappings.push_back({vidx, sidx});
+        mshader_mappings.push_back(std::make_pair(vidx, sidx));
+        return 0;
     }
 
     void renderer::submit_scene()
@@ -62,7 +57,7 @@ namespace lina { namespace graphics {
         mmanger.create_default_render_pass();
         for (const auto& [vidx, sidx] : mshader_mappings)
         {
-            mmanger.create_pipeline(mvertex_buffers[vidx], mshaders[sidx], vidx, sidx);
+            mmanger.create_graphics_pipeline(&mvertex_buffers[vidx], &mshaders[sidx], vidx, sidx);
         }
     }
 

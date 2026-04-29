@@ -6,7 +6,6 @@
 #include "../backend_manager.h"
 #include <iostream>
 namespace lina{ namespace graphics{ namespace backend{
-    class manager;
     class buffer
     {
         struct specs

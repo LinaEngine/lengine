@@ -2,13 +2,13 @@
 #include "window.h"
 #include "backend_manager.h"
 namespace lina { namespace graphics { namespace backend {
-    void resource_manager::add_ub(buffers::uniform& buf)
+    void resource_manager::add_ub(buffers::uniform* buf)
     {
         m_shader_resrouces.ub.push_back(buf);
     }
     VkPipelineShaderStageCreateInfo* resource_manager::get_shader_info_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.stage_info = (i64)m_shader_resrouces.shader_stage_infos.size()});
             return nullptr;
@@ -22,7 +22,7 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkPushConstantRange* resource_manager::get_ps_range_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.ps_range = (i64)m_shader_resrouces.ps_ranges.size()});
             return nullptr;
@@ -36,7 +36,7 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkPipelineVertexInputStateCreateInfo* resource_manager::get_vertex_info_pointer(i64 vertex_idx)
     {
-        if (vertex_idx > m_vertex_offsets.size())
+        if (vertex_idx >= m_vertex_offsets.size())
         {
             m_vertex_offsets.push_back(m_vert_input_infos.size());
             return nullptr;
@@ -45,7 +45,7 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkDescriptorSetLayout* resource_manager::get_dset_layout_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.dset_layout = (i64)m_shader_resrouces.dset_layout.size()});
             return nullptr;
@@ -59,7 +59,7 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkDescriptorSet* resource_manager::get_dset_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.dset = (i64)m_shader_resrouces.dset.size()});
             return nullptr;
@@ -71,9 +71,9 @@ namespace lina { namespace graphics { namespace backend {
         }
         return &m_shader_resrouces.dset[m_shader_offsets[shader_idx].dset];
     }
-    VkDescriptorSetLayout* resource_manager::get_dpool_pointer(i64 shader_idx)
+    VkDescriptorPool* resource_manager::get_dpool_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.dpool = (i64)m_shader_resrouces.dpool.size()});
             return nullptr;
@@ -86,9 +86,9 @@ namespace lina { namespace graphics { namespace backend {
         return &m_shader_resrouces.dpool[m_shader_offsets[shader_idx].dpool];
     }
 
-    buffers::uniform* resource_manager::get_ub_pointer(i64 shader_idx)
+    buffers::uniform** resource_manager::get_ub_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.ub = (i64)m_shader_resrouces.ub.size()});
             return nullptr;
@@ -102,7 +102,7 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkPipelineLayout* resource_manager::get_pipeline_layout_pointer(i64 shader_idx)
     {
-        if (shader_idx > m_shader_offsets.size())
+        if (shader_idx >= m_shader_offsets.size())
         {
             m_shader_offsets.push_back((shader_offset){.pipeline_layout = (i64)m_shader_resrouces.pipeline_layout.size()});
             return nullptr;
@@ -116,9 +116,9 @@ namespace lina { namespace graphics { namespace backend {
     }
     VkPipeline* resource_manager::get_pipeline_pointer(i64 pipeline_idx)
     {
-        if (pipeline_idx > m_pipeline_offsets.size())
+        if (pipeline_idx >= m_pipeline_offsets.size())
         {
-            m_vertex_offsets.push_back(m_pipeline_resources.pipeline.size());
+            m_pipeline_offsets.push_back(m_pipeline_resources.pipeline.size());
             return nullptr;
         }
         return &m_pipeline_resources.pipeline[m_pipeline_offsets[pipeline_idx]];

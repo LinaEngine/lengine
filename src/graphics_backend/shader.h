@@ -48,6 +48,7 @@ namespace lina { namespace graphics { namespace backend {
             inline u32 get_uniform_count() const;
             inline u32 get_static_count() const;
             inline u32 get_dynamic_count() const;
+            inline u32 get_ps_count() const;
             const inline std::vector<Program>& get_programs() const;
             const inline std::vector<PushConstant>& get_ps() const;
             const inline std::vector<Uniform>& get_uniforms() const;
@@ -59,8 +60,9 @@ namespace lina { namespace graphics { namespace backend {
             std::vector<Uniform> m_static_uniforms;
             std::vector<Uniform> m_dynamic_uniforms;
     };
-    u32 shader::get_binding_count()const {return m_static_uniforms.size() + m_dynamic_uniforms.size();}
-    u32 shader::get_uniform_count()const {return m_static_uniforms.size() + m_dynamic_uniforms.size();}
+    inline u32 shader::get_binding_count()const {return m_static_uniforms.size() + m_dynamic_uniforms.size();}
+    inline u32 shader::get_uniform_count()const {return m_static_uniforms.size() + m_dynamic_uniforms.size();}
+    inline u32 shader::get_ps_count() const {return m_push_constants.size();};
     const inline std::vector<Program>& shader::get_programs() const {return mprograms;}
     const inline std::vector<PushConstant>& shader::get_ps()const {return m_push_constants;}
     const inline std::vector<Uniform>& shader::get_uniforms() const {return m_uniforms;};

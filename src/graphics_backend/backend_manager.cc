@@ -6,6 +6,7 @@
 #include "buffers/vertex_buffer.h"
 #include <GLFW/glfw3.h>
 #include <cinttypes>
+#include <climits>
 #include <iostream>
 #include <vulkan/vulkan_core.h>
 
@@ -341,6 +342,7 @@ namespace lina { namespace graphics { namespace backend {
         VkPhysicalDeviceFeatures features = 
         {
             .depthClamp = VK_TRUE,
+            .fillModeNonSolid = VK_TRUE,
             .samplerAnisotropy = VK_TRUE,
         };
         VkDeviceCreateInfo device_info = 
@@ -622,10 +624,11 @@ namespace lina { namespace graphics { namespace backend {
         }
         return true;
     }
-    b8 manager::create_shader(const shader& sh)
+    b8 manager::create_shader(shader* sh)
     {
-        const auto& programs = sh.get_programs();
-        mvk_shader_modules.resize(programs.size());
+        const auto& programs = sh->get_programs();
+        auto old_sz = mvk_shader_modules.size();
+        mvk_shader_modules.resize(programs.size() + old_sz);
         for (i32 i = 0 ; i < programs.size(); i++)
         {
             VkShaderModuleCreateInfo create_info= {};
@@ -633,15 +636,15 @@ namespace lina { namespace graphics { namespace backend {
             create_info.codeSize = programs[i].program.size();
             create_info.pCode =(const u32*)(programs[i].program.data());
             vkCreateShaderModule(mvkdevice, &create_info,
-                    nullptr, &mvk_shader_modules[i]);
+                    nullptr, &mvk_shader_modules[i + old_sz]);
         }
         return true;
     }
-    VkDescriptorSetLayout manager::create_ds_layout(const shader& s)
+    VkDescriptorSetLayout manager::create_ds_layout(shader* s)
     {
-        auto bindingsCount = s.get_binding_count();
-        auto uniformCount = s.get_uniform_count();
-        const auto& uniformRef = s.get_uniforms();
+        auto bindingsCount = s->get_binding_count();
+        auto uniformCount = s->get_uniform_count();
+        const auto& uniformRef = s->get_uniforms();
         std::vector<VkDescriptorSetLayoutBinding> bindings;
         bindings.reserve(bindingsCount);
 
@@ -652,7 +655,7 @@ namespace lina { namespace graphics { namespace backend {
             VkDescriptorSetLayoutBinding uboLayoutBinding
             {
                 .binding = ur.binding,
-                    .descriptorType = ur.type, 
+                    .descriptorType = (VkDescriptorType)ur.type, 
                     .descriptorCount = 1,
                     .stageFlags = (VkShaderStageFlags)ur.stage, 
                     .pImmutableSamplers = nullptr
@@ -675,10 +678,10 @@ namespace lina { namespace graphics { namespace backend {
             std::cerr<<"No layout created!\n";
         return setLayout;
     }
-    VkDescriptorPool manager::create_dpool(const shader& shader)
+    VkDescriptorPool manager::create_dpool(shader* shader)
     {
-        auto binding_count = shader.get_binding_count();
-        auto& uniforms =shader.get_uniforms();
+        auto binding_count = shader->get_binding_count();
+        auto& uniforms =shader->get_uniforms();
 
         std::vector<VkDescriptorPoolSize> pool_sizes;
         pool_sizes.reserve(binding_count);
@@ -686,7 +689,7 @@ namespace lina { namespace graphics { namespace backend {
         VkDescriptorPool vkpool;
 
         u32 u = 0;
-        if ((u = shader.get_static_count()) > 0)
+        if ((u = shader->get_static_count()) > 0)
         {
             pool_sizes.push_back(
                     {
@@ -695,7 +698,7 @@ namespace lina { namespace graphics { namespace backend {
                     });
         }
 
-        if ((u = shader.get_dynamic_count()) > 0)
+        if ((u = shader->get_dynamic_count()) > 0)
         {
             pool_sizes.push_back(
                     {
@@ -709,7 +712,6 @@ namespace lina { namespace graphics { namespace backend {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                 .maxSets = 1,
                 .poolSizeCount = static_cast<u32>(pool_sizes.size()),
-                .pPoolSizes = pool_sizes.data(),
         };
 
         if(vkCreateDescriptorPool(
@@ -720,7 +722,7 @@ namespace lina { namespace graphics { namespace backend {
             std::cerr<<"Error creating set\n";
         return vkpool;
     }
-    void manager::add_dsets(const shader& s, i32 shader_idx)
+    void manager::add_dsets(shader* shader, i32 shader_idx)
     {
         auto* layout = m_resource_manager.get_dset_layout_pointer(shader_idx);
         auto dpool = m_resource_manager.get_dpool_pointer(shader_idx)[0];
@@ -735,33 +737,33 @@ namespace lina { namespace graphics { namespace backend {
         m_resource_manager.add_dsets(allocInfo, this);
 
         std::vector<VkWriteDescriptorSet> descriptorWrite;
-        auto uniform_count = shader.get_uniform_count();
+        auto uniform_count = shader->get_uniform_count();
         descriptorWrite.resize(uniform_count);
 
         std::vector<VkDescriptorBufferInfo> buff_infos;
         buff_infos.resize(uniform_count);
 
-        auto& refUniform = shader.get_uniforms();
+        auto& refUniform = shader->get_uniforms();
 
-        auto* upointers = resource_manager.get_ub_pointer(shader_idx);
-        auto* dsetpointers = resource_manager.get_dset_pointer(shader_idx);
+        auto** upointers = m_resource_manager.get_ub_pointer(shader_idx);
+        auto* dsetpointers = m_resource_manager.get_dset_pointer(shader_idx);
         for (int i = 0; i < refUniform.size(); i++)
         {
             buff_infos[i] =  
             {
-                .buffer = upointers[i]->m_specs.buffer,
+                .buffer = upointers[i]->get_buffer(),
                 .offset = 0,
                 .range = upointers[i]->get_size()
             };
 
             descriptorWrite[i] = 
-            {
+            (VkWriteDescriptorSet){
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                 .dstSet = dsetpointers[0],
                 .dstBinding = refUniform[i].binding,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
-                .descriptorType = refUniform[i].type,
+                .descriptorType = (VkDescriptorType)refUniform[i].type,
                 .pImageInfo = nullptr,
                 .pBufferInfo = &buff_infos[i],
                 .pTexelBufferView = nullptr,
@@ -775,15 +777,15 @@ namespace lina { namespace graphics { namespace backend {
                 0,
                 nullptr);
     }
-    b8 manager::create_graphics_pipeline(buffers::vertex& vb, shader& shader, i32 vertex_idx, i32 shader_idx)
+    b8 manager::create_graphics_pipeline(buffers::vertex* vb, shader* shader, i32 vertex_idx, i32 shader_idx)
     {
-        auto* ppipeline = m_resource_manager.get_pipeline_pointer(shader_idx);
-        const auto& mod = shader.get_programs();
-        const auto& refPs = shader.get_ps();
+        //auto* ppipeline = m_resource_manager.get_pipeline_pointer(shader_idx);
+        const auto& mod = shader->get_programs();
+        const auto& refPs = shader->get_ps();
         auto count = mod.size();
         i32 offset = mvk_shader_modules.size();
         auto* pstages = m_resource_manager.get_shader_info_pointer(shader_idx);
-        if (pstages == nullptr)
+        if (pstages == nullptr && shader->get_programs().size() > 0)
         {
             auto module_offset = mvk_shader_modules.size();
             create_shader(shader);
@@ -792,7 +794,7 @@ namespace lina { namespace graphics { namespace backend {
                 VkPipelineShaderStageCreateInfo shader_info
                 {
                     .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                        .stage = p.stage,
+                        .stage = (VkShaderStageFlagBits)p.stage,
                         .module = mvk_shader_modules[module_offset++],
                         .pName = "main"
                 };
@@ -802,7 +804,7 @@ namespace lina { namespace graphics { namespace backend {
         }
 
         auto* psranges = m_resource_manager.get_ps_range_pointer(shader_idx);
-        if (psranges == nullptr)
+        if (psranges == nullptr && shader->get_ps_count() > 0)
         {
             for (const auto& rps : refPs)
             {
@@ -812,40 +814,39 @@ namespace lina { namespace graphics { namespace backend {
                     .offset = rps.offset,
                     .size = rps.size,
                 };
-                m_resource_manager.add_ps(psRange);
+                m_resource_manager.add_shader_ps(psRange);
             }
             psranges = m_resource_manager.get_ps_range_pointer(shader_idx);
         }
 
         auto* puniforms = m_resource_manager.get_ub_pointer(shader_idx);
-        if (puniforms == nullptr)
+        if (puniforms == nullptr && shader->get_uniform_count() > 0)
         {
-            shader.combine_uniforms();
-            auto& uniforms = shader.get_uniforms();
+            shader->combine_uniforms();
+            auto& uniforms = shader->get_uniforms();
             for (int j = 0; j < uniforms.size(); j++)
             {
-                buffers::uniform new_buf;
-                new_buf.init(this);
-                new_buf.construct(uniforms[j].size, uniforms[j].count);
+                buffers::uniform* new_buf = new buffers::uniform();
+                new_buf->init(this);
+                new_buf->construct(uniforms[j].size, uniforms[j].count);
                 m_resource_manager.add_ub(new_buf);
             }
             puniforms = m_resource_manager.get_ub_pointer(shader_idx);
         }
 
+
+        auto* dpool = m_resource_manager.get_dpool_pointer(shader_idx);
+        if (dpool == nullptr)
+        {
+            auto dpool = create_dpool(shader);
+            m_resource_manager.add_dpool(dpool);
+        }
         auto* pdset_layout = m_resource_manager.get_dset_layout_pointer(shader_idx);
         if (pdset_layout == nullptr)
         {
             auto setlayout = create_ds_layout(shader);
             m_resource_manager.add_dset_layout(setlayout);
             pdset_layout = m_resource_manager.get_dset_layout_pointer(shader_idx);
-        }
-
-        auto* pdpool_layout = m_resource_manager.get_dpool_layout_pointer(shader_idx);
-        if (pdpool_layout == nullptr)
-        {
-            auto setlayout = create_ds_layout(shader);
-            m_resource_manager.add_dpool_layout(setlayout);
-            pdpool_layout = m_resource_manager.get_dpool_layout_pointer(shader_idx);
         }
 
         auto* pdset = m_resource_manager.get_dset_pointer(shader_idx);
@@ -856,20 +857,24 @@ namespace lina { namespace graphics { namespace backend {
         }
 
         auto* pvertex_input = m_resource_manager.get_vertex_info_pointer(vertex_idx);
+        auto* attributeDescriptions = vb->get_attribute_descriptions().data();
+        u32 sz = vb->get_attribute_descriptions().size();
+        auto* bindingDescription = new VkVertexInputBindingDescription;
+        *bindingDescription = vb->get_binding_description();
         if (pvertex_input == nullptr)
         {
             VkPipelineVertexInputStateCreateInfo vinput_info;
-            auto attributeDescriptions = vb.get_attribute_descriptions();
-            auto bindingDescription = vb.get_binding_description();
             vinput_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
             vinput_info.vertexBindingDescriptionCount = 1;
-            vinput_info.pVertexBindingDescriptions = &bindingDescription;
-            vinput_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-            vinput_info.pVertexAttributeDescriptions = attributeDescriptions.data();
+            vinput_info.pVertexBindingDescriptions = bindingDescription;
+            vinput_info.vertexAttributeDescriptionCount = sz;
+            vinput_info.pVertexAttributeDescriptions = attributeDescriptions;
+
             m_resource_manager.add_vertex_input_info(vinput_info);
 
             pvertex_input = m_resource_manager.get_vertex_info_pointer(vertex_idx);
         }
+
 
         auto* ppipeline_layout = m_resource_manager.get_pipeline_layout_pointer(shader_idx);
         if (ppipeline_layout == nullptr)
@@ -879,7 +884,7 @@ namespace lina { namespace graphics { namespace backend {
             pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
             pipeline_layout_info.pSetLayouts = pdset_layout;
             pipeline_layout_info.setLayoutCount = 1;
-            pipeline_layout_info.pushConstantRangeCount = shader.get_ps().size();
+            pipeline_layout_info.pushConstantRangeCount = shader->get_ps().size();
             pipeline_layout_info.pPushConstantRanges = psranges;
 
             vkCreatePipelineLayout(mvkdevice, &pipeline_layout_info,
@@ -889,11 +894,100 @@ namespace lina { namespace graphics { namespace backend {
             ppipeline_layout = m_resource_manager.get_pipeline_layout_pointer(shader_idx);
         }
 
-        auto info = default_pipeline_settings();
+        
+
+        VkPipelineDepthStencilStateCreateInfo depth_stencil
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                .depthTestEnable = VK_TRUE,
+                .depthWriteEnable = VK_TRUE,
+                .depthCompareOp = VK_COMPARE_OP_LESS,
+                .depthBoundsTestEnable = VK_FALSE,
+                .stencilTestEnable = VK_FALSE,
+        };
+
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly.primitiveRestartEnable = VK_FALSE;
+
+        VkPipelineViewportStateCreateInfo viewport_state{};
+        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount = 1;
+
+        VkPipelineRasterizationStateCreateInfo rasterizer{};
+        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterizer.depthClampEnable = VK_TRUE;
+        rasterizer.rasterizerDiscardEnable = VK_FALSE;
+        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+        rasterizer.lineWidth = 1.0f;
+        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        rasterizer.depthBiasEnable = VK_FALSE;
+
+        VkPipelineMultisampleStateCreateInfo multisampling{};
+        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisampling.sampleShadingEnable = VK_FALSE;
+        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkPipelineColorBlendAttachmentState color_blend_attachment
+        {
+            .blendEnable = VK_TRUE,
+                .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                .colorBlendOp = VK_BLEND_OP_ADD,
+                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                .alphaBlendOp = VK_BLEND_OP_ADD,
+                .colorWriteMask = 
+                    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT 
+                    | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+        };
+        VkPipelineColorBlendStateCreateInfo color_blending =
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .logicOpEnable = VK_FALSE,
+            .logicOp = VK_LOGIC_OP_COPY,
+            .attachmentCount = 1,
+            .pAttachments = &color_blend_attachment,
+            .blendConstants = { 0.0f, 0.0f, 0.0f, 0.0f},
+        };
+        std::vector<VkDynamicState> dynamic_states = {
+            VK_DYNAMIC_STATE_VIEWPORT,
+            VK_DYNAMIC_STATE_SCISSOR,
+            VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
+            VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
+        };
+        VkPipelineDynamicStateCreateInfo dynamic_state{};
+        dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+        dynamic_state.pDynamicStates = dynamic_states.data();
+
+        VkGraphicsPipelineCreateInfo info = 
+        {
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+
+            .pInputAssemblyState = &input_assembly,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisampling,
+            .pDepthStencilState = &depth_stencil,
+            .pColorBlendState = &color_blending,
+            .pDynamicState = &dynamic_state,
+
+            .renderPass = mvk_render_passes[mcurr_render_pass],
+            .subpass = 0,
+
+            .basePipelineHandle = VK_NULL_HANDLE,
+            .basePipelineIndex = -1
+        };
         info.stageCount = count;
         info.pStages = pstages;
         info.pVertexInputState = pvertex_input;
         info.layout = *ppipeline_layout;
+
+        auto* _ = m_resource_manager.get_pipeline_pointer(INT_MAX);
         VkPipeline pipeline;
         vkCreateGraphicsPipelines(
                 mvkdevice,
@@ -1051,12 +1145,12 @@ namespace lina { namespace graphics { namespace backend {
             .pViewportState = &viewport_state,
             .pRasterizationState = &rasterizer,
             .pMultisampleState = &multisampling,
+            .pDepthStencilState = &depth_stencil,
             .pColorBlendState = &color_blending,
             .pDynamicState = &dynamic_state,
-            .pDepthStencilState = &depth_stencil,
 
-            .renderPass = mvk_render_passes[mcurr_render_pass]
-                .subpass = 0,
+            .renderPass = mvk_render_passes[mcurr_render_pass],
+            .subpass = 0,
 
             .basePipelineHandle = VK_NULL_HANDLE,
             .basePipelineIndex = -1

@@ -1,6 +1,7 @@
 #ifndef BACKEND_BUFFER_UNIFORM_H
 #define BACKEND_BUFFER_UNIFORM_H
 #include "../backend_manager.h"
+#include "buffer.h"
 #include <vulkan/vulkan.h>
 namespace lina { namespace graphics { namespace backend { namespace buffers {
     class uniform  : public buffer

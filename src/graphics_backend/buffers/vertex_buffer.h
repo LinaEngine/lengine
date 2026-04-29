@@ -15,12 +15,12 @@ namespace lina{ namespace graphics{ namespace backend { namespace buffers{
                 );
 
         /* Getters */
-        inline VkVertexInputBindingDescription get_binding_description()
+        const inline VkVertexInputBindingDescription& get_binding_description()
         {
             return m_input_binding_description;
         }
 
-        inline std::vector<VkVertexInputAttributeDescription>
+        const inline std::vector<VkVertexInputAttributeDescription>&
             get_attribute_descriptions()
             {
                 return m_attribute_descriptions;

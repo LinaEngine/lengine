@@ -2,7 +2,6 @@
 #define BACKEND_RESOURCE_MANAGER_H
 #include <vector>
 #include "../core/types.h"
-#include "buffers/buffer.h"
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
 namespace lina { namespace graphics { namespace backend {
@@ -25,7 +24,7 @@ namespace lina { namespace graphics { namespace backend {
     {
         std::vector<VkPipelineShaderStageCreateInfo> shader_stage_infos;
         std::vector<VkPushConstantRange> ps_ranges;
-        std::vector<buffers::uniform> ub;
+        std::vector<buffers::uniform*> ub;
         std::vector<VkDescriptorSetLayout> dset_layout;
         std::vector<VkDescriptorPool> dpool;
         std::vector<VkDescriptorSet> dset;
@@ -42,15 +41,15 @@ namespace lina { namespace graphics { namespace backend {
             VkPushConstantRange* get_ps_range_pointer(i64 shader_idx);
             VkPipelineVertexInputStateCreateInfo* get_vertex_info_pointer(i64 shader_idx);
             VkDescriptorSetLayout* get_dset_layout_pointer(i64 shader_idx);
-            VkDescriptorSetLayout* get_dpool_pointer(i64 shader_idx);
+            VkDescriptorPool* get_dpool_pointer(i64 shader_idx);
             VkDescriptorSet* get_dset_pointer(i64 shader_idx);
-            buffers::uniform* get_ub_pointer(i64 shader_idx);
+            buffers::uniform** get_ub_pointer(i64 shader_idx);
             VkPipelineLayout* get_pipeline_layout_pointer(i64 shader_idx);
             VkPipeline* get_pipeline_pointer(i64 shader_idx);
             inline void add_shader_ps(VkPushConstantRange& ps);
             inline void add_shader_stage_info(VkPipelineShaderStageCreateInfo& info);
             inline void add_vertex_input_info(VkPipelineVertexInputStateCreateInfo& info);
-            void add_ub(buffers::uniform& buffer);
+            void add_ub(buffers::uniform* buffer);
             inline void add_dset_layout(VkDescriptorSetLayout& layout);
             inline void add_dpool(VkDescriptorPool& pool);
             void add_dsets(VkDescriptorSetAllocateInfo& dset, manager* m);

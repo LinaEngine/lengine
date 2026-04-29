@@ -53,7 +53,7 @@ namespace lina { namespace graphics { namespace backend {
             b8 init(window* win);
             inline b8 request_render_pass() {return false;};
             b8 create_default_graphics_pipeline();
-            b8 create_graphics_pipeline(buffers::vertex& vb, shader& shader, i32 vertex_idx, i32 shader_idx);
+            b8 create_graphics_pipeline(buffers::vertex* vb, shader* shader, i32 vertex_idx, i32 shader_idx);
             void begin_draw();
             void bind(u32 idx = 0);
             void end_draw();
@@ -68,11 +68,11 @@ namespace lina { namespace graphics { namespace backend {
             b8 create_command_structures();
             void clear_swap_chain();
             b8 recreate_swap_chain();
-            b8 create_shader(const shader& sh);
+            b8 create_shader(shader* sh);
             VkGraphicsPipelineCreateInfo default_pipeline_settings();
-            VkDescriptorSetLayout create_ds_layout(const shader& s);
-            VkDescriptorPool create_dpool(const shader& s);
-            void add_dsets(const shader& s, i32 shader_idx);
+            VkDescriptorSetLayout create_ds_layout(shader* s);
+            VkDescriptorPool create_dpool(shader* s);
+            void add_dsets(shader* s, i32 shader_idx);
 
         public:
             VkDevice mvkdevice;

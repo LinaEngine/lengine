@@ -1,4 +1,5 @@
 #include "uniform_buffer.h"
+#include <cstring>
 namespace lina { namespace graphics { namespace backend { namespace buffers {
     void uniform::init(manager* mang)
     {        
